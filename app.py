@@ -5,7 +5,7 @@ from ultralytics import YOLO
 import cv2
 
 st.set_page_config(layout="wide")
-st.title("🏪 Temporary Red Box Around All Products")
+st.title("🏪 Red Boxes Around All Detected Products (Demo)")
 
 @st.cache_resource
 def load_model():
@@ -29,14 +29,12 @@ if uploaded_file:
     if len(result.boxes) == 0:
         st.warning("No objects detected.")
     else:
-        # Merge all detected boxes into one big red box
-        x_min = min([int(box.xyxy[0][0]) for box in result.boxes])
-        y_min = min([int(box.xyxy[0][1]) for box in result.boxes])
-        x_max = max([int(box.xyxy[0][2]) for box in result.boxes])
-        y_max = max([int(box.xyxy[0][3]) for box in result.boxes])
-
         annotated_img = img_array.copy()
-        cv2.rectangle(annotated_img, (x_min, y_min), (x_max, y_max), (255, 0, 0), 3)  # Red box
 
-        st.subheader("Annotated Image (All Products Highlighted)")
+        # Draw one red box per detected object
+        for box in result.boxes:
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            cv2.rectangle(annotated_img, (x1, y1), (x2, y2), (255, 0, 0), 3)  # Red box
+
+        st.subheader("Annotated Image")
         st.image(annotated_img, use_column_width=True)
