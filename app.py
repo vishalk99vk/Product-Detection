@@ -1,57 +1,41 @@
 import streamlit as st
 import numpy as np
 from PIL import Image
-from ultralytics import YOLO
+import cv2
 
-st.set_page_config(page_title="Retail Object Detection", layout="wide")
-
-@st.cache_resource
-def load_model():
-    return YOLO("yolov8n.pt")  # DEFAULT PRETRAINED MODEL
-
-model = load_model()
-
-st.title("🏪 Retail Store Object Detection (Default Model)")
-st.write("Using YOLOv8 pretrained model for pipeline verification")
+st.set_page_config(page_title="Shelf Product Highlighter", layout="wide")
+st.title("🏪 Highlight All Products with Red Box")
 
 uploaded_file = st.file_uploader(
-    "Upload store image (France / UK)",
+    "Upload store shelf image",
     type=["jpg", "jpeg", "png"]
 )
 
 if uploaded_file:
     image = Image.open(uploaded_file).convert("RGB")
     img_array = np.array(image)
+    img_gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
 
-    col1, col2 = st.columns(2)
+    # Edge detection
+    edges = cv2.Canny(img_gray, 50, 150)
 
-    with col1:
-        st.subheader("Original Image")
-        st.image(image, use_column_width=True)
+    # Find contours
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # 🔴 Run inference
-    results = model.predict(
-        source=img_array,
-        conf=0.15,   # LOW confidence so something shows
-        iou=0.5
-    )
+    # If any contours found, draw bounding box around all
+    if contours:
+        x_min = min([cv2.boundingRect(c)[0] for c in contours])
+        y_min = min([cv2.boundingRect(c)[1] for c in contours])
+        x_max = max([cv2.boundingRect(c)[0] + cv2.boundingRect(c)[2] for c in contours])
+        y_max = max([cv2.boundingRect(c)[1] + cv2.boundingRect(c)[3] for c in contours])
 
-    result = results[0]
+        boxed_img = img_array.copy()
+        cv2.rectangle(boxed_img, (x_min, y_min), (x_max, y_max), (255, 0, 0), 3)  # Red box
 
-    # 🔍 Debug info
-    st.subheader("Detection Summary")
-    if result.boxes is not None and len(result.boxes) > 0:
-        for box in result.boxes:
-            cls_id = int(box.cls[0])
-            conf = float(box.conf[0])
-            label = model.names[cls_id]
-            st.write(f"• {label} → {conf:.2f}")
+        st.subheader("Annotated Image")
+        st.image(boxed_img, use_column_width=True)
     else:
-        st.warning("No objects detected by default model.")
+        st.warning("No objects detected. Try a clearer shelf image.")
 
-    # 🖼️ Draw boxes
-    if result.boxes is not None and len(result.boxes) > 0:
-        annotated_img = result.plot()
-        with col2:
-            st.subheader("Annotated Image")
-            st.image(annotated_img, use_column_width=True)
+    st.subheader("Original Image")
+    st.image(image, use_column_width=True)
