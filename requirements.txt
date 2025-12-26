@@ -1,7 +1,3 @@
-# Change this:
-# opencv-python
-
-# To this:
-opencv-python-headless
 ultralytics
 huggingface_hub
+opencv-python-headless
