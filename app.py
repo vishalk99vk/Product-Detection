@@ -1,38 +1,41 @@
 import streamlit as st
 import numpy as np
 from PIL import Image
-from ultralytics import YOLOWorld # Use YOLO-World for any-object detection
+from ultralytics import YOLO
 import cv2
 
 st.set_page_config(layout="wide")
-st.title("🏪 Full SKU Detection (Red Boxes)")
+st.title("🏪 Red Box SKU Finder")
 
 @st.cache_resource
 def load_model():
-    # YOLO-World is much better at finding generic "products"
-    model = YOLOWorld("yolov8s-world.pt") 
-    # Define what a 'product' is for the model
-    model.set_classes(["product pack"]) 
-    return model
+    # Use 'm' (medium) instead of 'n' (nano). It is much better at 
+    # seeing the boundaries of boxes on a shelf.
+    return YOLO("yolov8m.pt") 
 
 model = load_model()
 
-uploaded_file = st.file_uploader("Upload shelf image", type=["jpg","jpeg","png"])
+uploaded_file = st.file_uploader("Upload Store Image", type=["jpg","png"])
 
 if uploaded_file:
-    image = Image.open(uploaded_file).convert("RGB")
-    img_array = np.array(image)
+    img = Image.open(uploaded_file).convert("RGB")
+    img_array = np.array(img)
 
-    # imgsz=1024 is critical for small items on a shelf
-    results = model.predict(source=img_array, conf=0.15, iou=0.3, imgsz=1024)
-    result = results[0]
-
+    # SETTINGS FOR FULL SKU DETECTION:
+    # 1. imgsz=1280: This is the most important. It zooms in so small packs are clear.
+    # 2. conf=0.05: We set this very low to catch EVERY possible box.
+    # 3. iou=0.2: This helps prevent boxes from overlapping too much.
+    results = model.predict(source=img_array, conf=0.05, iou=0.2, imgsz=1280)
+    
     annotated_img = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-
-    for box in result.boxes:
+    
+    count = 0
+    for box in results[0].boxes:
         x1, y1, x2, y2 = map(int, box.xyxy[0])
-        # Draw the Red Box (BGR: 0, 0, 255)
-        cv2.rectangle(annotated_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+        
+        # Draw Red Box
+        cv2.rectangle(annotated_img, (x1, y1), (x2, y2), (0, 0, 255), 3)
+        count += 1
 
-    st.image(cv2.cvtColor(annotated_img, cv2.COLOR_BGR2RGB), use_container_width=True)
-    st.success(f"Detected {len(result.boxes)} individual SKUs.")
+    st.image(cv2.cvtColor(annotated_img, cv2.COLOR_BGR2RGB))
+    st.write(f"Detected {count} potential SKU areas.")
