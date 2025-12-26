@@ -18,7 +18,7 @@ def load_retail_model():
         )
         return YOLO(model_path)
     except Exception as e:
-        st.error(f"Error loading model: {e}")
+        st.error(f"Error loading model from Hugging Face: {e}")
         return None
 
 model = load_retail_model()
@@ -41,7 +41,7 @@ if uploaded_file and model:
 
         for box in result.boxes:
             x1, y1, x2, y2 = map(int, box.xyxy[0])
-            # Draw a thick Red box around the SKU
+            # Draw a thick Red box (BGR: 0, 0, 255) around the SKU
             cv2.rectangle(annotated_img, (x1, y1), (x2, y2), (0, 0, 255), 3)
 
         st.subheader(f"Detected {len(result.boxes)} SKUs")
