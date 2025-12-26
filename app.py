@@ -1,32 +1,32 @@
 import streamlit as st
 from ultralytics import YOLO
 import numpy as np
-import cv2
 from PIL import Image
 import json
+import sys
 
-# ---------------- CONFIG ----------------
-st.set_page_config(page_title="YOLOv8 Store Annotation", layout="wide")
-st.title("🛒 Store Product Annotation & Shelf Grouping")
+# ---------------- PAGE CONFIG ----------------
+st.set_page_config(page_title="YOLOv8 Store Product Detection", layout="wide")
+st.title("🛒 YOLOv8 Store Product Detection")
 
-# Sidebar
-st.sidebar.header("Settings")
+# Debug Python version (remove later if you want)
+st.caption(f"Python Version: {sys.version}")
+
+# ---------------- SIDEBAR ----------------
+st.sidebar.header("Detection Settings")
 conf_threshold = st.sidebar.slider("Confidence Threshold", 0.1, 1.0, 0.3, 0.05)
-img_size = st.sidebar.selectbox("Image Size", [640, 960, 1280], index=2)
-shelf_gap = st.sidebar.slider("Shelf Gap (px)", 30, 150, 80)
+img_size = st.sidebar.selectbox("Image Size", [640, 960, 1280], index=0)
+shelf_gap = st.sidebar.slider("Shelf Gap (px)", 40, 200, 90)
 
 # ---------------- LOAD MODEL ----------------
 @st.cache_resource
 def load_model():
-    return YOLO("yolov8s.pt")
+    return YOLO("yolov8n.pt")  # safest for Streamlit Cloud
 
 model = load_model()
 
 # ---------------- FUNCTIONS ----------------
 def group_by_shelf(detections, gap):
-    """
-    Group products into shelves using vertical center clustering
-    """
     detections = sorted(detections, key=lambda x: x["y_center"])
     shelf_id = 0
     prev_y = None
@@ -44,32 +44,33 @@ def export_coco(detections, img_w, img_h):
     coco = {
         "images": [{
             "id": 1,
+            "file_name": "store_image.jpg",
             "width": img_w,
-            "height": img_h,
-            "file_name": "store_image.jpg"
+            "height": img_h
         }],
         "annotations": [],
         "categories": []
     }
 
-    cat_map = {}
+    category_map = {}
     ann_id = 1
 
     for d in detections:
-        if d["class"] not in cat_map:
-            cat_id = len(cat_map) + 1
-            cat_map[d["class"]] = cat_id
+        cls = d["class"]
+        if cls not in category_map:
+            category_map[cls] = len(category_map) + 1
             coco["categories"].append({
-                "id": cat_id,
-                "name": d["class"]
+                "id": category_map[cls],
+                "name": cls
             })
 
-        x, y, w, h = d["x1"], d["y1"], d["x2"] - d["x1"], d["y2"] - d["y1"]
+        x, y = d["x1"], d["y1"]
+        w, h = d["x2"] - d["x1"], d["y2"] - d["y1"]
 
         coco["annotations"].append({
             "id": ann_id,
             "image_id": 1,
-            "category_id": cat_map[d["class"]],
+            "category_id": category_map[cls],
             "bbox": [x, y, w, h],
             "area": w * h,
             "iscrowd": 0,
@@ -80,13 +81,13 @@ def export_coco(detections, img_w, img_h):
     return coco
 
 
-# ---------------- UPLOAD ----------------
+# ---------------- IMAGE UPLOAD ----------------
 uploaded_file = st.file_uploader("Upload Store Image", ["jpg", "jpeg", "png"])
 
 if uploaded_file:
     image = Image.open(uploaded_file).convert("RGB")
     img_np = np.array(image)
-    h, w = img_np.shape[:2]
+    img_h, img_w = img_np.shape[:2]
 
     col1, col2 = st.columns(2)
 
@@ -120,6 +121,8 @@ if uploaded_file:
     detections = group_by_shelf(detections, shelf_gap)
 
     # ---------------- DRAW ANNOTATIONS ----------------
+    import cv2  # lazy import (CRITICAL for Streamlit Cloud)
+
     annotated = img_np.copy()
     shelf_colors = {}
 
@@ -141,7 +144,7 @@ if uploaded_file:
         cv2.putText(
             annotated,
             f"{d['class']} | Shelf {shelf}",
-            (d["x1"], d["y1"] - 5),
+            (d["x1"], d["y1"] - 6),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.5,
             color,
@@ -153,27 +156,27 @@ if uploaded_file:
         st.image(annotated, use_container_width=True)
 
     # ---------------- TABLE ----------------
-    st.subheader("Shelf-wise Product Data")
+    st.subheader("Detected Products (Shelf-wise)")
     st.dataframe(detections, use_container_width=True)
 
     # ---------------- EXPORTS ----------------
     json_data = json.dumps(detections, indent=2)
-    coco_data = json.dumps(export_coco(detections, w, h), indent=2)
+    coco_data = json.dumps(export_coco(detections, img_w, img_h), indent=2)
 
-    col3, col4 = st.columns(2)
+    c1, c2 = st.columns(2)
 
-    with col3:
+    with c1:
         st.download_button(
             "⬇️ Download JSON",
             json_data,
-            file_name="detections_shelf.json",
-            mime="application/json"
+            "detections_shelf.json",
+            "application/json"
         )
 
-    with col4:
+    with c2:
         st.download_button(
             "⬇️ Download COCO",
             coco_data,
-            file_name="detections_shelf_coco.json",
-            mime="application/json"
+            "detections_shelf_coco.json",
+            "application/json"
         )
