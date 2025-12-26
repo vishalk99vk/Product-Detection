@@ -5,37 +5,34 @@ from ultralytics import YOLO
 import cv2
 
 st.set_page_config(layout="wide")
-st.title("🏪 Red Box SKU Finder")
+st.title("🎯 High-Accuracy SKU Detector")
 
 @st.cache_resource
-def load_model():
-    # Use 'm' (medium) instead of 'n' (nano). It is much better at 
-    # seeing the boundaries of boxes on a shelf.
-    return YOLO("yolov8m.pt") 
+def load_retail_model():
+    # This model is pre-trained specifically for dense retail shelves
+    # It focuses on finding "product boxes" rather than general objects
+    return YOLO('foduucom/shelf-object-detection-yolov8')
 
-model = load_model()
-
-uploaded_file = st.file_uploader("Upload Store Image", type=["jpg","png"])
+model = load_retail_model()
+uploaded_file = st.file_uploader("Upload shelf image", type=["jpg","jpeg","png"])
 
 if uploaded_file:
-    img = Image.open(uploaded_file).convert("RGB")
-    img_array = np.array(img)
+    image = Image.open(uploaded_file).convert("RGB")
+    img_array = np.array(image)
 
-    # SETTINGS FOR FULL SKU DETECTION:
-    # 1. imgsz=1280: This is the most important. It zooms in so small packs are clear.
-    # 2. conf=0.05: We set this very low to catch EVERY possible box.
-    # 3. iou=0.2: This helps prevent boxes from overlapping too much.
-    results = model.predict(source=img_array, conf=0.05, iou=0.2, imgsz=1280)
+    # CRITICAL SETTINGS FOR ACCURACY:
+    # imgsz=1280: Zooms in on small products (crucial for dense shelves)
+    # conf=0.15: Catches items the model is less certain about
+    # iou=0.3: Allows boxes to be very close together
+    results = model.predict(source=img_array, conf=0.15, iou=0.3, imgsz=1280)
     
+    # Process image for display
     annotated_img = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
     
-    count = 0
     for box in results[0].boxes:
         x1, y1, x2, y2 = map(int, box.xyxy[0])
-        
-        # Draw Red Box
-        cv2.rectangle(annotated_img, (x1, y1), (x2, y2), (0, 0, 255), 3)
-        count += 1
+        # Draw the Red Box
+        cv2.rectangle(annotated_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
 
-    st.image(cv2.cvtColor(annotated_img, cv2.COLOR_BGR2RGB))
-    st.write(f"Detected {count} potential SKU areas.")
+    st.image(cv2.cvtColor(annotated_img, cv2.COLOR_BGR2RGB), use_container_width=True)
+    st.success(f"Detected {len(results[0].boxes)} products with high-precision shelf weights.")
