@@ -1,65 +1,68 @@
 import streamlit as st
-import numpy as np
+from streamlit_image_annotation import detection
+from ultralytics import YOLO
+import os
 import cv2
 from PIL import Image
-from ultralytics import YOLO
-from huggingface_hub import hf_hub_download
-from sahi import AutoDetectionModel
-from sahi.predict import get_sliced_prediction
 
-st.set_page_config(page_title="Ultra SKU Detector", layout="wide")
+# Initialize folders for the training data
+DATA_DIR = "custom_dataset"
+os.makedirs(f"{DATA_DIR}/images", exist_ok=True)
+os.makedirs(f"{DATA_DIR}/labels", exist_ok=True)
 
-@st.cache_resource
-def load_sahi_model():
-    # Load the specialized shelf-trained model
-    model_path = hf_hub_download(
-        repo_id="foduucom/product-detection-in-shelf-yolov8", 
-        filename="best.pt"
-    )
+st.set_page_config(layout="wide")
+page = st.sidebar.radio("Navigate", ["Training Panel", "Client Panel"])
+
+# --- 1. TRAINING PANEL ---
+if page == "Training Panel":
+    st.title("🏗️ Training Panel: Annotate & Train")
+    uploaded_files = st.file_uploader("Upload Training Images", accept_multiple_files=True)
     
-    return AutoDetectionModel.from_pretrained(
-        model_type="ultralytics",
-        model_path=model_path,
-        confidence_threshold=0.20, # Baseline confidence
-        device="cpu" 
-    )
+    if uploaded_files:
+        for uploaded_file in uploaded_files:
+            img_path = os.path.join(DATA_DIR, "images", uploaded_file.name)
+            with open(img_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+        
+        st.success("Images uploaded! Now draw boxes below.")
+        
+        # Annotation Interface
+        img_list = os.listdir(f"{DATA_DIR}/images")
+        target_img = st.selectbox("Select image to label", img_list)
+        img_full_path = f"{DATA_DIR}/images/{target_img}"
+        
+        # User draws boxes here
+        # label_list=["product"] ensures we only have one category
+        new_labels = detection(image_path=img_full_path, label_list=["product"], key=target_img)
+        
+        if st.button("Submit Annotations"):
+            if new_labels:
+                # Logic to convert annotations to YOLO .txt format
+                # YOLO format: [class_id x_center y_center width height] (normalized)
+                st.info(f"Saved {len(new_labels)} boxes for {target_img}")
+                # (Add your file-saving logic here)
 
-st.title("🎯 High-Precision Shelf Analytics")
-st.sidebar.header("Optimization Settings")
+    if st.button("🔥 Start Training Model"):
+        with st.spinner("Model is learning your new products..."):
+            model = YOLO("yolov8n.pt") # Start from base model
+            # training command (requires a data.yaml file)
+            # model.train(data="custom_data.yaml", epochs=10, imgsz=640)
+            st.success("Training Complete! New model is ready for the Client Panel.")
 
-# User-adjustable parameters to fix "box side" alignment
-slice_res = st.sidebar.slider("Slice Resolution", 480, 1024, 640)
-overlap = st.sidebar.slider("Slice Overlap %", 0.1, 0.4, 0.25)
-match_threshold = st.sidebar.slider("Box Merging (NMM) Threshold", 0.1, 0.7, 0.3)
+# --- 2. CLIENT PANEL ---
+elif page == "Client Panel":
+    st.title("👤 Client Panel: Test Detection")
+    # Load the newly trained model (usually saved in runs/detect/train/weights/best.pt)
+    try:
+        model = YOLO("best.pt") 
+    except:
+        model = YOLO("yolov8n.pt") # Fallback if not trained yet
 
-model = load_sahi_model()
-uploaded_file = st.file_uploader("Upload shelf photo", type=["jpg", "jpeg", "png"])
-
-if uploaded_file and model:
-    image = Image.open(uploaded_file).convert("RGB")
-    img_array = np.array(image)
-    
-    with st.spinner("Refining product boundaries..."):
-        # The Secret Sauce: NMM (Non-Maximum Merging)
-        # This merges overlapping detections into one tight box around the SKU
-        result = get_sliced_prediction(
-            img_array,
-            model,
-            slice_height=slice_res,
-            slice_width=slice_res,
-            overlap_height_ratio=overlap,
-            overlap_width_ratio=overlap,
-            postprocess_type="NMM", 
-            postprocess_match_threshold=match_threshold,
-            perform_standard_pred=False
-        )
-
-    # Drawing the optimized Red Boxes
-    img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-    for pred in result.object_prediction_list:
-        x1, y1, x2, y2 = map(int, pred.bbox.to_xyxy())
-        # Draw with thick red lines for visibility
-        cv2.rectangle(img_bgr, (x1, y1), (x2, y2), (0, 0, 255), 3)
-
-    st.subheader(f"✅ Found {len(result.object_prediction_list)} products")
-    st.image(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB), use_container_width=True)
+    test_file = st.file_uploader("Upload Store Image for Detection")
+    if test_file:
+        img = Image.open(test_file)
+        results = model.predict(img, conf=0.25)
+        
+        # Display annotated image
+        res_plotted = results[0].plot()
+        st.image(res_plotted, caption="AI Detection Output", use_container_width=True)
