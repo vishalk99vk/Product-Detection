@@ -5,178 +5,96 @@ from PIL import Image
 import json
 import sys
 
-# ---------------- PAGE CONFIG ----------------
-st.set_page_config(page_title="YOLOv8 Store Product Detection", layout="wide")
+st.set_page_config(page_title="YOLOv8 Store Detection", layout="wide")
 st.title("🛒 YOLOv8 Store Product Detection")
 
-# Debug Python version (remove later if you want)
-st.caption(f"Python Version: {sys.version}")
+st.caption(f"Python version: {sys.version}")
 
-# ---------------- SIDEBAR ----------------
-st.sidebar.header("Detection Settings")
-conf_threshold = st.sidebar.slider("Confidence Threshold", 0.1, 1.0, 0.3, 0.05)
-img_size = st.sidebar.selectbox("Image Size", [640, 960, 1280], index=0)
+# Sidebar
+conf = st.sidebar.slider("Confidence", 0.1, 1.0, 0.3, 0.05)
+imgsz = st.sidebar.selectbox("Image Size", [640, 960, 1280], index=0)
 shelf_gap = st.sidebar.slider("Shelf Gap (px)", 40, 200, 90)
 
-# ---------------- LOAD MODEL ----------------
 @st.cache_resource
 def load_model():
-    return YOLO("yolov8n.pt")  # safest for Streamlit Cloud
+    return YOLO("yolov8n.pt")
 
 model = load_model()
 
-# ---------------- FUNCTIONS ----------------
-def group_by_shelf(detections, gap):
-    detections = sorted(detections, key=lambda x: x["y_center"])
-    shelf_id = 0
-    prev_y = None
+def group_by_shelf(dets, gap):
+    dets = sorted(dets, key=lambda x: x["y_center"])
+    shelf, prev = 0, None
+    for d in dets:
+        if prev is None or abs(d["y_center"] - prev) > gap:
+            shelf += 1
+        d["shelf_id"] = shelf
+        prev = d["y_center"]
+    return dets
 
-    for d in detections:
-        if prev_y is None or abs(d["y_center"] - prev_y) > gap:
-            shelf_id += 1
-        d["shelf_id"] = shelf_id
-        prev_y = d["y_center"]
-
-    return detections
-
-
-def export_coco(detections, img_w, img_h):
-    coco = {
-        "images": [{
-            "id": 1,
-            "file_name": "store_image.jpg",
-            "width": img_w,
-            "height": img_h
-        }],
-        "annotations": [],
-        "categories": []
-    }
-
-    category_map = {}
-    ann_id = 1
-
-    for d in detections:
-        cls = d["class"]
-        if cls not in category_map:
-            category_map[cls] = len(category_map) + 1
-            coco["categories"].append({
-                "id": category_map[cls],
-                "name": cls
-            })
-
-        x, y = d["x1"], d["y1"]
-        w, h = d["x2"] - d["x1"], d["y2"] - d["y1"]
-
+def export_coco(dets, w, h):
+    coco = {"images":[{"id":1,"width":w,"height":h,"file_name":"image.jpg"}],
+            "annotations":[], "categories":[]}
+    cat_map, ann_id = {}, 1
+    for d in dets:
+        if d["class"] not in cat_map:
+            cat_map[d["class"]] = len(cat_map) + 1
+            coco["categories"].append({"id":cat_map[d["class"]],"name":d["class"]})
+        x,y = d["x1"], d["y1"]
+        bw,bh = d["x2"]-d["x1"], d["y2"]-d["y1"]
         coco["annotations"].append({
-            "id": ann_id,
-            "image_id": 1,
-            "category_id": category_map[cls],
-            "bbox": [x, y, w, h],
-            "area": w * h,
-            "iscrowd": 0,
-            "shelf_id": d["shelf_id"]
+            "id":ann_id,"image_id":1,
+            "category_id":cat_map[d["class"]],
+            "bbox":[x,y,bw,bh],
+            "area":bw*bh,"iscrowd":0,
+            "shelf_id":d["shelf_id"]
         })
-        ann_id += 1
-
+        ann_id+=1
     return coco
 
+file = st.file_uploader("Upload store image", ["jpg","jpeg","png"])
 
-# ---------------- IMAGE UPLOAD ----------------
-uploaded_file = st.file_uploader("Upload Store Image", ["jpg", "jpeg", "png"])
+if file:
+    img = Image.open(file).convert("RGB")
+    arr = np.array(img)
+    h,w = arr.shape[:2]
 
-if uploaded_file:
-    image = Image.open(uploaded_file).convert("RGB")
-    img_np = np.array(image)
-    img_h, img_w = img_np.shape[:2]
-
-    col1, col2 = st.columns(2)
-
+    col1,col2 = st.columns(2)
     with col1:
-        st.subheader("Original Image")
-        st.image(image, use_container_width=True)
+        st.image(img, caption="Original", use_container_width=True)
 
-    # ---------------- YOLO INFERENCE ----------------
-    with st.spinner("Detecting products..."):
-        results = model(img_np, conf=conf_threshold, imgsz=img_size)
+    with st.spinner("Running YOLOv8..."):
+        results = model(arr, conf=conf, imgsz=imgsz)
 
     boxes = results[0].boxes
-    detections = []
+    dets = []
 
-    for box in boxes:
-        x1, y1, x2, y2 = map(int, box.xyxy[0])
-        y_center = int((y1 + y2) / 2)
-        cls_id = int(box.cls[0])
-
-        detections.append({
-            "class": model.names[cls_id],
-            "confidence": round(float(box.conf[0]), 3),
-            "x1": x1,
-            "y1": y1,
-            "x2": x2,
-            "y2": y2,
-            "y_center": y_center
+    for b in boxes:
+        x1,y1,x2,y2 = map(int, b.xyxy[0])
+        dets.append({
+            "class": model.names[int(b.cls[0])],
+            "confidence": round(float(b.conf[0]),3),
+            "x1":x1,"y1":y1,"x2":x2,"y2":y2,
+            "y_center": int((y1+y2)/2)
         })
 
-    # ---------------- SHELF GROUPING ----------------
-    detections = group_by_shelf(detections, shelf_gap)
-
-    # ---------------- DRAW ANNOTATIONS ----------------
-    import cv2  # lazy import (CRITICAL for Streamlit Cloud)
-
-    annotated = img_np.copy()
-    shelf_colors = {}
-
-    for d in detections:
-        shelf = d["shelf_id"]
-        if shelf not in shelf_colors:
-            shelf_colors[shelf] = tuple(np.random.randint(0, 255, 3).tolist())
-
-        color = shelf_colors[shelf]
-
-        cv2.rectangle(
-            annotated,
-            (d["x1"], d["y1"]),
-            (d["x2"], d["y2"]),
-            color,
-            2
-        )
-
-        cv2.putText(
-            annotated,
-            f"{d['class']} | Shelf {shelf}",
-            (d["x1"], d["y1"] - 6),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            color,
-            2
-        )
+    dets = group_by_shelf(dets, shelf_gap)
 
     with col2:
-        st.subheader("Shelf-wise Annotated Image")
-        st.image(annotated, use_container_width=True)
+        st.image(results[0].plot(), caption="Detected Products", use_container_width=True)
 
-    # ---------------- TABLE ----------------
-    st.subheader("Detected Products (Shelf-wise)")
-    st.dataframe(detections, use_container_width=True)
+    st.subheader("Detections")
+    st.dataframe(dets, use_container_width=True)
 
-    # ---------------- EXPORTS ----------------
-    json_data = json.dumps(detections, indent=2)
-    coco_data = json.dumps(export_coco(detections, img_w, img_h), indent=2)
+    st.download_button(
+        "⬇️ Download JSON",
+        json.dumps(dets, indent=2),
+        "detections.json",
+        "application/json"
+    )
 
-    c1, c2 = st.columns(2)
-
-    with c1:
-        st.download_button(
-            "⬇️ Download JSON",
-            json_data,
-            "detections_shelf.json",
-            "application/json"
-        )
-
-    with c2:
-        st.download_button(
-            "⬇️ Download COCO",
-            coco_data,
-            "detections_shelf_coco.json",
-            "application/json"
-        )
+    st.download_button(
+        "⬇️ Download COCO",
+        json.dumps(export_coco(dets,w,h), indent=2),
+        "detections_coco.json",
+        "application/json"
+    )
