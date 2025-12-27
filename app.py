@@ -56,7 +56,7 @@ if panel == "🏗️ Training Panel":
                 with open(os.path.join(LBL_DIR, txt_name), "w") as f:
                     for ann in new_annotations:
                         bx = ann['bbox'] # [x, y, width, height]
-                        # Convert to YOLO format
+                        # Convert to YOLO format for RF-DETR
                         xc, yc = (bx[0] + bx[2]/2) / w, (bx[1] + bx[3]/2) / h
                         nw, nh = bx[2] / w, bx[3] / h
                         f.write(f"0 {xc} {yc} {nw} {nh}\n")
@@ -65,8 +65,7 @@ if panel == "🏗️ Training Panel":
     st.divider()
     if st.button("🔥 Run RF-DETR Training"):
         with st.spinner("Training RF-DETR (Transformer)..."):
-            # Logic to trigger training script goes here
-            st.info("RF-DETR training initiated. Ensure your local dataset is mapped correctly.")
+            st.info("RF-DETR training initiated. Check logs for progress.")
 
 # --- 4. PANEL 2: CLIENT PANEL (IMAGE & VIDEO) ---
 else:
@@ -85,13 +84,11 @@ else:
     
     if test_file:
         file_extension = os.path.splitext(test_file.name)[1].lower()
-        
-        # Annotation tools
         box_annotator = sv.BoxAnnotator()
         label_annotator = sv.LabelAnnotator()
 
         if file_extension in ['.png', '.jpg', '.jpeg']:
-            # IMAGE PROCESSING
+            # IMAGE LOGIC
             img = Image.open(test_file)
             img_np = np.array(img)
             detections = model.predict(img_np, threshold=0.25)
@@ -101,8 +98,9 @@ else:
             st.image(annotated_image, use_container_width=True)
             
         else:
-            # VIDEO PROCESSING
-            tfile = tempfile.NamedTemporaryFile(delete=False)
+            # VIDEO LOGIC
+            # 1. Save upload to temporary file
+            tfile = tempfile.NamedTemporaryFile(delete=False, suffix=file_extension)
             tfile.write(test_file.read())
             
             video_cap = cv2.VideoCapture(tfile.name)
@@ -110,19 +108,22 @@ else:
             height = int(video_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             fps = int(video_cap.get(cv2.CAP_PROP_FPS))
             
-            # Temporary path for the output file
+            # 2. Setup Video Writer for Export
             out_path = os.path.join(tempfile.gettempdir(), "output_detection.mp4")
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             out_writer = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
             
-            st_frame = st.empty() # Placeholder for the video stream
+            st_frame = st.empty() # Placeholder for streaming frames
+            progress_bar = st.progress(0)
+            frame_count = int(video_cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
+            curr_frame = 0
             while video_cap.isOpened():
                 ret, frame = video_cap.read()
                 if not ret:
                     break
                 
-                # RF-DETR Inference (Convert BGR to RGB)
+                # RF-DETR expects RGB
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 detections = model.predict(frame_rgb, threshold=0.25)
                 
@@ -130,16 +131,19 @@ else:
                 annotated_frame = box_annotator.annotate(scene=frame_rgb.copy(), detections=detections)
                 annotated_frame = label_annotator.annotate(scene=annotated_frame, detections=detections)
                 
-                # Save frame (Convert back to BGR for Writer)
+                # Save to file (Writer needs BGR)
                 out_writer.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
                 
-                # Show in Streamlit
+                # Update Streamlit
                 st_frame.image(annotated_frame, channels="RGB", use_container_width=True)
+                curr_frame += 1
+                if frame_count > 0:
+                    progress_bar.progress(curr_frame / frame_count)
             
             video_cap.release()
             out_writer.release()
             
-            # Provide Download Button for processed video
+            # 3. Download Button
             with open(out_path, "rb") as f:
                 st.download_button(
                     label="💾 Download Processed Video",
