@@ -1,6 +1,7 @@
 streamlit
-ultralytics
-streamlit-image-annotation
 opencv-python-headless
-pyyaml
-pillow
+numpy
+supervision
+rfdetr
+Pillow
+streamlit-image-annotation
